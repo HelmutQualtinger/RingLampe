@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RingLampe Viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #07080b; color: #ddd; font: 13px system-ui, sans-serif; overflow: hidden; }
+  #ui { position: absolute; top: 12px; left: 12px; background: rgba(20,22,28,.82); padding: 12px 14px; border-radius: 8px; width: 240px; }
+  #ui h1 { font-size: 14px; margin: 0 0 8px; }
+  #ui label { display: block; margin: 8px 0 2px; }
+  #ui input[type=range] { width: 100%; }
+  #ui .row { display: flex; justify-content: space-between; }
+  #hint { position: absolute; bottom: 10px; left: 12px; opacity: .5; font-size: 12px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="ui">
+  <h1>RingLampe – 96 LEDs <span id="fps" style="float:right;font-weight:normal;opacity:.7"></span></h1>
+  <label><span class="row"><span>Rotation Regenbogen</span><span id="vSpeed"></span></span>
+    <input id="speed" type="range" min="-1" max="1" step="0.01" value="0.15"></label>
+  <label><span class="row"><span>Licht-Laufzeit nach oben (s)</span><span id="vDelay"></span></span>
+    <input id="delay" type="range" min="0" max="5" step="0.05" value="1.5"></label>
+  <label><span class="row"><span>Helligkeit</span><span id="vBright"></span></span>
+    <input id="bright" type="range" min="0" max="2" step="0.01" value="1"></label>
+  <label><span class="row"><span>Abfall nach oben</span><span id="vFall"></span></span>
+    <input id="fall" type="range" min="0" max="1" step="0.01" value="0.35"></label>
+  <label><span class="row"><span>Regenbogen-Wiederholungen</span><span id="vRep"></span></span>
+    <input id="rep" type="range" min="1" max="6" step="1" value="1"></label>
+  <label><input id="bloom" type="checkbox" checked> Glow (Bloom)</label>
+  <label><input id="tumble" type="checkbox" checked> Lampe taumeln (3 Achsen)</label>
+  <label><span class="row"><span>Taumel-Tempo</span><span id="vTumble"></span></span>
+    <input id="tumbleSpeed" type="range" min="0" max="3" step="0.05" value="1"></label>
+  <label><input id="rotate" type="checkbox"> Auto-Rotation Kamera</label>
+</div>
+<div id="hint">Maus: drehen · Rad: zoomen · Rechts: verschieben</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// ---------- Parameter (wie generate_ringlampe.py, mm) ----------
+const R_IN = 50, R_OUT = 55, N = 96, H = 200, TWIST = THREE.MathUtils.degToRad(120);
+const PLATE_T = 2, SEG_R_IN = 50.5, SEG_R_OUT = 54.5, GAP = 0.6, SLICES = 48;
+const PITCH = 2 * Math.PI / N, SEG_W = PITCH - GAP / SEG_R_IN;
+
+// ---------- Renderer / Szene ----------
+// Aufnahme-Modus (?record): feste Videoauflösung 1080×1350 (Facebook 4:5), deterministische Zeit
+const REC = new URLSearchParams(location.search).has('record');
+const VW = 1080, VH = 1350, FPS = 30, DURATION = 60;
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: REC });
+if (REC) {
+  renderer.setPixelRatio(1); renderer.setSize(VW, VH, false);
+  Object.assign(renderer.domElement.style, { height: '100vh', width: 'auto', display: 'block', margin: '0 auto' });
+} else {
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  renderer.setSize(innerWidth, innerHeight);
+}
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x07080b);
+const camera = new THREE.PerspectiveCamera(40, REC ? VW / VH : innerWidth / innerHeight, 1, 5000);
+camera.position.set(330, 200, 330);
+if (REC) camera.position.set(0, H / 2 + 110, 560);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, H / 2 + 40, 0);
+controls.enableDamping = true;
+controls.autoRotate = true; controls.autoRotateSpeed = 0.6;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+const dl = new THREE.DirectionalLight(0xffffff, 0.6); dl.position.set(200, 400, 150); scene.add(dl);
+
+// Boden
+const floor = new THREE.Mesh(new THREE.CircleGeometry(400, 64),
+  new THREE.MeshStandardMaterial({ color: 0x111318, roughness: 0.9 }));
+floor.rotation.x = -Math.PI / 2; floor.position.y = -PLATE_T - 0.01; scene.add(floor);
+
+// Modell in Z-up mm aufbauen, Gruppe nach Y-up drehen
+// Pivot im Lampenzentrum (Höhe H/2), darin das Modell (Z-up -> Y-up)
+const pivot = new THREE.Group(); pivot.position.y = H / 2 + 40; scene.add(pivot);
+const model = new THREE.Group(); model.rotation.x = -Math.PI / 2; model.position.y = -H / 2; pivot.add(model);
+
+function segQuad(k, twist = 0) {
+  const th = k * PITCH + twist, a = th - SEG_W / 2, b = th + SEG_W / 2;
+  return [[SEG_R_IN * Math.cos(a), SEG_R_IN * Math.sin(a)], [SEG_R_OUT * Math.cos(a), SEG_R_OUT * Math.sin(a)],
+          [SEG_R_OUT * Math.cos(b), SEG_R_OUT * Math.sin(b)], [SEG_R_IN * Math.cos(b), SEG_R_IN * Math.sin(b)]];
+}
+
+// ---------- Röhren mit Licht-Shader ----------
+const pos = [], segAttr = [], tAttr = [], nrm = [];
+const cT = Math.cos(TWIST), sT = Math.sin(TWIST);
+for (let k = 0; k < N; k++) {
+  const P = segQuad(k), RP = P.map(([x, y]) => [x * cT - y * sT, x * sT + y * cT]);
+  const at = (i, t) => [(1 - t) * P[i][0] + t * RP[i][0], (1 - t) * P[i][1] + t * RP[i][1], H * t];
+  for (let s = 0; s < SLICES; s++) {
+    const t0 = s / SLICES, t1 = (s + 1) / SLICES;
+    for (let e = 0; e < 4; e++) {
+      const f = (e + 1) % 4;
+      const v = [at(e, t0), at(f, t0), at(f, t1), at(e, t1)], ts = [t0, t0, t1, t1];
+      const n = new THREE.Vector3(...v[1]).sub(new THREE.Vector3(...v[0]))
+        .cross(new THREE.Vector3(...v[3]).sub(new THREE.Vector3(...v[0]))).normalize();
+      for (const i of [0, 1, 2, 0, 2, 3]) {
+        pos.push(...v[i]); nrm.push(n.x, n.y, n.z); segAttr.push(k); tAttr.push(ts[i]);
+      }
+    }
+  }
+}
+const tubeGeo = new THREE.BufferGeometry();
+tubeGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+tubeGeo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+tubeGeo.setAttribute('aSeg', new THREE.Float32BufferAttribute(segAttr, 1));
+tubeGeo.setAttribute('aT', new THREE.Float32BufferAttribute(tAttr, 1));
+
+const uniforms = {
+  uTime: { value: 0 }, uPhase: { value: 0 }, uDelay: { value: 1.5 }, uSpeed: { value: 0.15 },
+  uBright: { value: 1 }, uFall: { value: 0.35 }, uRep: { value: 1 }, uN: { value: N },
+};
+const glsl_hsv = `
+  vec3 hsv2rgb(vec3 c){ vec3 p = abs(fract(c.xxx + vec3(0.,2./3.,1./3.))*6.-3.);
+    return c.z * mix(vec3(1.), clamp(p-1.,0.,1.), c.y); }
+  // Farbe der LED k zum Zeitpunkt (jetzt - Laufzeit): uPhase = integrierte Rotation
+  vec3 ledColor(float k, float lag){ float h = fract(uRep * k / uN - (uPhase - lag * uSpeed)); return hsv2rgb(vec3(h, 1., 1.)); }`;
+
+const tubeMat = new THREE.ShaderMaterial({
+  uniforms, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+  vertexShader: `
+    attribute float aSeg; attribute float aT;
+    varying float vSeg; varying float vT; varying vec3 vN; varying vec3 vV;
+    void main(){
+      vSeg = aSeg; vT = aT;
+      vec4 mv = modelViewMatrix * vec4(position,1.);
+      vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    uniform float uPhase, uDelay, uSpeed, uBright, uFall, uRep, uN;
+    varying float vSeg; varying float vT; varying vec3 vN; varying vec3 vV;
+    ${glsl_hsv}
+    void main(){
+      vec3 col = ledColor(vSeg, vT * uDelay);              // Licht wandert mit Verzögerung nach oben
+      float atten = mix(1., exp(-3. * vT), uFall);          // Lichtverlust entlang der Röhre
+      float fres = 0.35 + 0.65 * pow(1. - abs(dot(vN, vV)), 2.);  // dünne Wand: Kanten leuchten stärker
+      float yellow = 0.004;                                   // Eigenfarbe gelber Kunststoff
+      gl_FragColor = vec4(col * atten * fres * uBright * 0.13 + vec3(1.,.8,.1) * yellow, 1.);
+    }`,
+});
+model.add(new THREE.Mesh(tubeGeo, tubeMat));
+
+// ---------- Basisringe (gelber transparenter Kunststoff) ----------
+const plateMat = new THREE.MeshPhysicalMaterial({
+  color: 0xffd21a, transparent: true, opacity: 0.55, roughness: 0.15, metalness: 0,
+  ior: 1.57, side: THREE.DoubleSide,   // keine transmission: kostet einen kompletten Zusatz-Renderpass
+});
+function plate(z, twist) {
+  const shape = new THREE.Shape(); shape.absarc(0, 0, R_OUT, 0, Math.PI * 2, false);
+  const hole0 = new THREE.Path(); hole0.absarc(0, 0, R_IN, 0, Math.PI * 2, true); shape.holes.push(hole0);
+  for (let k = 0; k < N; k++) {
+    const q = segQuad(k, twist), h = new THREE.Path();
+    h.moveTo(...q[0]); h.lineTo(...q[3]); h.lineTo(...q[2]); h.lineTo(...q[1]); h.closePath();
+    shape.holes.push(h);
+  }
+  const g = new THREE.ExtrudeGeometry(shape, { depth: PLATE_T, bevelEnabled: false, curveSegments: 96 });
+  const m = new THREE.Mesh(g, plateMat); m.position.z = z; return m;
+}
+model.add(plate(-PLATE_T, 0), plate(H, TWIST));
+
+// ---------- 96 RGB-LEDs (unter der unteren Basis) ----------
+const ledGeo = new THREE.BoxGeometry(2, 2, 0.8);
+const ledMat = new THREE.MeshBasicMaterial({ toneMapped: false });
+const leds = new THREE.InstancedMesh(ledGeo, ledMat, N);
+const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion();
+for (let k = 0; k < N; k++) {
+  const th = k * PITCH, r = (SEG_R_IN + SEG_R_OUT) / 2;
+  q4.setFromAxisAngle(new THREE.Vector3(0, 0, 1), th);
+  m4.compose(new THREE.Vector3(r * Math.cos(th), r * Math.sin(th), -0.45), q4, new THREE.Vector3(1, 1, 1));
+  leds.setMatrixAt(k, m4); leds.setColorAt(k, new THREE.Color());
+}
+model.add(leds);
+// LED-Platine
+const pcb = new THREE.Mesh(new THREE.RingGeometry(R_IN, R_OUT, 96),
+  new THREE.MeshStandardMaterial({ color: 0x1b1d22, roughness: 0.6, side: THREE.DoubleSide }));
+pcb.position.z = -PLATE_T + 0.0; model.add(pcb);
+
+// Farbige Lichtquellen für Umgebung (8 gemittelte Punktlichter am Boden)
+const fill = [];
+for (let i = 0; i < 8; i++) {
+  const l = new THREE.PointLight(0xffffff, 0, 260, 1.6);
+  const th = i / 8 * Math.PI * 2; l.position.set(60 * Math.cos(th), 60 * Math.sin(th), 4);
+  model.add(l); fill.push(l);
+}
+
+// ---------- Postprocessing ----------
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.7, 0.4, 0.55);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+if (REC) composer.setSize(VW, VH);
+
+// ---------- UI ----------
+const $ = id => document.getElementById(id);
+function syncUI() {
+  uniforms.uSpeed.value = +$('speed').value; uniforms.uDelay.value = +$('delay').value;
+  uniforms.uBright.value = +$('bright').value; uniforms.uFall.value = +$('fall').value;
+  uniforms.uRep.value = +$('rep').value;
+  $('vSpeed').textContent = (+$('speed').value).toFixed(2) + ' U/s';
+  $('vDelay').textContent = (+$('delay').value).toFixed(2);
+  $('vBright').textContent = (+$('bright').value).toFixed(2);
+  $('vFall').textContent = (+$('fall').value).toFixed(2);
+  $('vRep').textContent = $('rep').value;
+  $('vTumble').textContent = (+$('tumbleSpeed').value).toFixed(2);
+  bloom.enabled = $('bloom').checked; controls.autoRotate = $('rotate').checked;
+}
+document.querySelectorAll('#ui input').forEach(el => el.addEventListener('input', syncUI));
+syncUI();
+
+// ---------- Animation ----------
+const hsv = (h, out) => out.setHSL(((h % 1) + 1) % 1, 1, 0.5);
+const c = new THREE.Color();
+const clock = new THREE.Clock();
+let tumbleT = 0;
+let fpsN = 0, fpsT = performance.now();
+function step(dt, tumbleOn, tumbleSpeed) {
+  uniforms.uPhase.value += dt * uniforms.uSpeed.value;   // Phase integriert -> Geschwindigkeit live änderbar
+  const ph = uniforms.uPhase.value, rep = uniforms.uRep.value, br = uniforms.uBright.value;
+  for (let k = 0; k < N; k++) {
+    hsv(rep * k / N - ph, c); leds.setColorAt(k, c.multiplyScalar(1.5 * br));
+  }
+  leds.instanceColor.needsUpdate = true;
+  for (let i = 0; i < 8; i++) {
+    hsv(rep * i / 8 - ph, c); fill[i].color.copy(c); fill[i].intensity = 400 * br;
+  }
+  // Unregelmäßiges Taumeln: Winkelgeschwindigkeit je Achse = Summe inkommensurabler Sinusschwingungen
+  if (tumbleOn) {
+    tumbleT += dt * tumbleSpeed;
+    const t = tumbleT, w = (a, b, c, p) => 0.9 * Math.sin(a * t + p) + 0.6 * Math.sin(b * t + 2 * p) + 0.35 * Math.sin(c * t + 3 * p);
+    const s = dt * tumbleSpeed;
+    pivot.rotateX(s * (0.25 + w(0.31, 0.83, 1.97, 0.0)));
+    pivot.rotateY(s * (0.40 + w(0.47, 1.13, 2.39, 1.7)));
+    pivot.rotateZ(s * (0.15 + w(0.23, 0.71, 1.61, 3.1)));
+  }
+  controls.update();
+  composer.render();
+}
+
+if (!REC) renderer.setAnimationLoop(() => {
+  step(clock.getDelta(), $('tumble').checked, +$('tumbleSpeed').value);
+  fpsN++; const now = performance.now();
+  if (now - fpsT >= 1000) { $('fps').textContent = Math.round(fpsN * 1000 / (now - fpsT)) + ' fps'; window.__fps = fpsN * 1000 / (now - fpsT); fpsN = 0; fpsT = now; }
+});
+
+// ---------- Videoaufnahme: Frame für Frame rendern, Overlay zeichnen, an lokalen Server senden ----------
+if (REC) {
+  $('ui').style.display = 'none'; $('hint').style.display = 'none';
+  controls.enabled = false; controls.autoRotate = false; controls.enableDamping = false;
+  const out = document.createElement('canvas'); out.width = VW; out.height = VH;
+  const g = out.getContext('2d');
+  const smooth = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x);
+  const textAlpha = t => Math.max(smooth((t - 0.8) / 1.2) * (1 - smooth((t - 6) / 1.2)),
+                                  smooth((t - 52.5) / 1.2) * (1 - smooth((t - 59.2) / 0.6)));
+  function overlay(t) {
+    const a = textAlpha(t);
+    if (a > 0.001) {
+      g.save(); g.globalAlpha = a; g.fillStyle = '#ffffff'; g.textAlign = 'center';
+      g.font = '600 64px -apple-system, "Helvetica Neue", Arial, sans-serif';
+      g.fillText('RingLampe', VW / 2, 130);
+      g.font = '400 30px -apple-system, "Helvetica Neue", Arial, sans-serif';
+      g.fillStyle = 'rgba(255,255,255,0.8)';
+      g.fillText('96 RGB-LEDs · 96 Röhren · 120° verdreht', VW / 2, 185);
+      g.fillText('Ø 110 mm · Höhe 204 mm · Wandstärke 0,2 mm', VW / 2, VH - 90);
+      g.restore();
+    }
+    const fade = smooth(t / 1.0) * (1 - smooth((t - 59) / 1.0));   // Ein-/Ausblenden
+    if (fade < 1) { g.fillStyle = `rgba(0,0,0,${1 - fade})`; g.fillRect(0, 0, VW, VH); }
+  }
+  window.__rec = { frame: 0, total: FPS * DURATION, done: false };
+  window.startRecording = async (endpoint = '/frame/') => {
+    const dt = 1 / FPS;
+    for (let i = 0; i < FPS * DURATION; i++) {
+      const t = i / FPS;
+      // Choreografie: Regenbogen-Tempo schwankt sanft, Taumeln startet ruhig und wird lebhafter
+      uniforms.uSpeed.value = 0.18 + 0.12 * Math.sin(2 * Math.PI * t / 30);
+      const tumble = 0.5 + 0.7 * smooth(t / 12);
+      step(dt, true, tumble);
+      g.drawImage(renderer.domElement, 0, 0);
+      overlay(t);
+      const blob = await new Promise(r => out.toBlob(r, 'image/jpeg', 0.95));
+      await fetch(endpoint + String(i).padStart(4, '0'), { method: 'POST', body: blob });
+      window.__rec.frame = i + 1;
+    }
+    window.__rec.done = true;
+  };
+}
+
+addEventListener('resize', () => {
+  if (REC) return;
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
