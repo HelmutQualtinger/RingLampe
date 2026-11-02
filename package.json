@@ -1,0 +1,19 @@
+{
+  "name": "ringlampe",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RingLampe 3D-Viewer als iOS/Android-App (Capacitor)",
+  "scripts": {
+    "build": "rm -rf www && mkdir -p www && cp -R index.html ringlampe_viewer.html manifest.webmanifest sw.js og-image.jpg icons www/",
+    "ios": "npm run build && npx cap add ios 2>/dev/null; npx cap sync ios && npx cap open ios",
+    "android": "npm run build && npx cap add android 2>/dev/null; npx cap sync android && npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/ios": "^6.1.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2"
+  }
+}
