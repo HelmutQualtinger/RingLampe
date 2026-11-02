@@ -11,15 +11,15 @@ Prozedural erzeugter Lampenkörper aus 96 Lichtröhren zwischen zwei LED-Ringen 
 | Parameter | Wert |
 |---|---|
 | Ringbasis | Ø außen 110 mm / Ø innen 100 mm, Dicke 2 mm |
-| Segmente / LEDs | 96 viereckige Öffnungen, Teilung 3,75° |
+| Öffnungen / LEDs | 96 runde Bohrungen Ø 2,8 mm auf Teilkreis Ø 105 mm, Teilung 3,75° |
 | Abstand der Basen | 200 mm (Gesamthöhe 204 mm) |
 | Verdrehung obere Basis | 120° |
-| Röhren | 96, linear gelofted (Regelfläche), Wandstärke 0,2 mm normal zur Wand |
-| Taille | Ø 54,5 mm bei z = 100 mm |
+| Röhren | 96 runde Röhren Ø 2,8 mm (Basis), linear gelofted (Regelfläche), Wandstärke 0,2 mm normal zur Wand |
+| Taille | Ø 53,9 mm bei z = 100 mm |
 | Material | Kunststoff gelb transparent (PETG/PMMA) |
-| Volumen | ca. 37,6 cm³ |
+| Volumen | ca. 26,1 cm³ |
 
-Jeder Horizontalschnitt ist die Basis, skaliert mit cos(φ/2) und um φ/2 gedreht. Dadurch schneiden sich die Röhren nicht (Mindestspalt in der Taille 0,3 mm).
+Jeder Horizontalschnitt ist die Basis, skaliert mit cos(φ/2) und um φ/2 gedreht. Die Querschnitte bleiben deshalb Kreise und die Röhren schneiden sich nicht (Spalt an der Basis 0,64 mm, in der Taille 0,32 mm).
 
 ## Dateien
 

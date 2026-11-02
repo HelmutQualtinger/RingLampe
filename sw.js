@@ -1,5 +1,5 @@
 // Stale-while-revalidate: App und three.js (CDN) laufen nach dem ersten Besuch auch offline.
-const CACHE = 'ringlampe-v1';
+const CACHE = 'ringlampe-v2';
 self.addEventListener('install', e => e.waitUntil(
   caches.open(CACHE).then(c => c.addAll(['./', 'index.html', 'ringlampe_viewer.html', 'manifest.webmanifest',
                                           'icons/icon-192.png', 'icons/icon-512.png']))

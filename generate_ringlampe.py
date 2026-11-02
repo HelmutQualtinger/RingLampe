@@ -2,11 +2,12 @@
 """RingLampe – prozedurale Erzeugung (STL, GLB, technische Zeichnung PDF).
 
 Geometrie (Einheiten mm):
-  * 2 ringförmige Basen, AD 110 / ID 100, Dicke PLATE_T, mit je 96 viereckigen LED-Öffnungen
+  * 2 ringförmige Basen, AD 110 / ID 100, Dicke PLATE_T, mit je 96 runden LED-Öffnungen
   * obere Basis 200 mm über der unteren, um 120° verdreht
-  * 96 Röhren, linear gelofted vom unteren zum oberen Segment, Wandstärke 0.2 mm (normal zur Wand)
+  * 96 runde Röhren, linear gelofted von der unteren zur oberen Öffnung, Wandstärke 0.2 mm (normal zur Wand)
   * Jeder Horizontalschnitt des Röhrenbündels ist eine Ähnlichkeitsabbildung (Drehung+Skalierung)
-    der Basis-Segmente -> Röhren schneiden sich nie, solange die Basis-Segmente disjunkt sind.
+    der Basis-Kreise -> Querschnitte bleiben Kreise, Röhren schneiden sich nie, solange die
+    Basis-Kreise disjunkt sind.
 """
 import json
 import struct
@@ -24,12 +25,13 @@ HEIGHT = 200.0                    # Abstand der Basen
 TWIST = np.radians(120.0)         # Verdrehung obere Basis
 WALL = 0.2                        # Röhrenwandstärke
 PLATE_T = 2.0                     # Dicke der Basisringe
-SEG_R_IN, SEG_R_OUT = 50.5, 54.5  # radiale Lage der Segmente (0.5 mm Steg innen/außen)
-GAP = 0.6                         # tangentialer Spalt zwischen Segmenten am Innenradius (Basis)
-N_SLICES = 80                     # Unterteilung der Röhren in z
+TUBE_RC = 52.5                    # Teilkreisradius der Röhrenmitten
+TUBE_D = 2.8                      # Röhren-Außendurchmesser an der Basis
+N_CIRC = 16                       # Polygonpunkte je Röhrenquerschnitt
+N_SLICES = 40                     # Unterteilung der Röhren in z
 
 PITCH = 2 * np.pi / N_SEG
-SEG_W = PITCH - GAP / SEG_R_IN    # Winkelbreite eines Segments
+GAP = 2 * TUBE_RC * np.sin(PITCH / 2) - TUBE_D   # Spalt zwischen Nachbarröhren an der Basis
 
 
 def rot(a):
@@ -37,55 +39,39 @@ def rot(a):
     return np.array([[c, -s], [s, c]])
 
 
-def seg_quad(k, twist=0.0):
-    """Außenkontur (Footprint) von Segment k, CCW: in-a, out-a, out-b, in-b."""
+def tube_center(k, twist=0.0):
     th = k * PITCH + twist
-    a, b = th - SEG_W / 2, th + SEG_W / 2
-    return np.array([
-        [SEG_R_IN * np.cos(a), SEG_R_IN * np.sin(a)],
-        [SEG_R_OUT * np.cos(a), SEG_R_OUT * np.sin(a)],
-        [SEG_R_OUT * np.cos(b), SEG_R_OUT * np.sin(b)],
-        [SEG_R_IN * np.cos(b), SEG_R_IN * np.sin(b)],
-    ])
+    return TUBE_RC * np.array([np.cos(th), np.sin(th)])
 
 
-def line_intersect(p1, d1, p2, d2):
-    A = np.array([d1, -d2]).T
-    s = np.linalg.solve(A, p2 - p1)
-    return p1 + s[0] * d1
+def tube_circle(k, twist=0.0):
+    """Außenkontur (Footprint) von Röhre k, CCW, N_CIRC Punkte. Startwinkel dreht mit,
+    damit tube_circle(k, φ) = rot(φ) · tube_circle(k, 0) punktweise gilt."""
+    th = k * PITCH + twist
+    psi = th + 2 * np.pi * np.arange(N_CIRC) / N_CIRC
+    return tube_center(k, twist) + TUBE_D / 2 * np.c_[np.cos(psi), np.sin(psi)]
 
 
 def tube_slices(k):
-    """Liefert outer[N+1,4,3], inner[N+1,4,3] für Röhre k."""
-    P = seg_quad(k)
+    """Liefert outer[N+1,M,3], inner[N+1,M,3] für Röhre k."""
+    P = tube_circle(k)
     RP = P @ rot(TWIST).T
+    D = np.c_[RP - P, np.full(N_CIRC, HEIGHT)]          # Erzeugende je Konturpunkt
     ts = np.linspace(0, 1, N_SLICES + 1)
-    outer = np.zeros((len(ts), 4, 3))
-    inner = np.zeros((len(ts), 4, 3))
+    outer = np.zeros((len(ts), N_CIRC, 3))
+    inner = np.zeros((len(ts), N_CIRC, 3))
     for j, t in enumerate(ts):
         C = (1 - t) * P + t * RP
-        z = HEIGHT * t
         cen = C.mean(axis=0)
-        lines = []
-        for i in range(4):
-            c0, c1 = C[i], C[(i + 1) % 4]
-            e = np.append(c1 - c0, 0.0)
-            # Richtung der Erzeugenden an Kantenmitte
-            dmid = ((RP[i] - P[i]) + (RP[(i + 1) % 4] - P[(i + 1) % 4])) / 2
-            d = np.append(dmid, HEIGHT)
-            n = np.cross(e, d)
-            n /= np.linalg.norm(n)
-            h = np.hypot(n[0], n[1])
-            nh = n[:2] / h
-            mid = (c0 + c1) / 2
-            if np.dot(cen - mid, nh) < 0:
-                nh = -nh
-            off = WALL / h                         # horizontaler Versatz für 0.2 mm Normalwand
-            lines.append((c0 + nh * off, c1 - c0))
-        Q = np.array([line_intersect(lines[i - 1][0], lines[i - 1][1], lines[i][0], lines[i][1])
-                      for i in range(4)])
-        outer[j, :, :2], outer[j, :, 2] = C, z
-        inner[j, :, :2], inner[j, :, 2] = Q, z
+        e = np.c_[np.roll(C, -1, 0) - np.roll(C, 1, 0), np.zeros(N_CIRC)]   # Tangente
+        n = np.cross(e, D)
+        n /= np.linalg.norm(n, axis=1, keepdims=True)
+        h = np.hypot(n[:, 0], n[:, 1])
+        nh = n[:, :2] / h[:, None]
+        nh *= np.sign(np.einsum('ij,ij->i', cen - C, nh))[:, None]           # nach innen
+        Q = C + nh * (WALL / h)[:, None]       # horizontaler Versatz für 0.2 mm Normalwand
+        outer[j, :, :2], outer[j, :, 2] = C, HEIGHT * t
+        inner[j, :, :2], inner[j, :, 2] = Q, HEIGHT * t
     return outer, inner
 
 
@@ -98,28 +84,44 @@ def quad(a, b, c, d):
     tris.append((a, c, d))
 
 
+def zipper(A, B):
+    """Trianguliert den Ring zwischen äußerer Schleife A und innerer Schleife B (beide CCW,
+    sternförmig um B-Mitte). Dreiecke CCW von +z gesehen, nur Originalpunkte (keine T-Stöße)."""
+    c = B.mean(0)
+    ref = np.arctan2(*(A[0] - c)[::-1])
+    ang = lambda P: np.mod(np.arctan2(P[:, 1] - c[1], P[:, 0] - c[0]) - ref, 2 * np.pi)
+    B = np.roll(B, -np.argmin(ang(B)), 0)
+    aa, ab = np.append(ang(A), 2 * np.pi), ang(B)
+    ab = np.append(ab, ab[0] + 2 * np.pi)
+    A2, B2 = np.vstack([A, A[:1]]), np.vstack([B, B[:1]])
+    out, i, j = [], 0, 0
+    while i < len(A) or j < len(B):
+        if j == len(B) or (i < len(A) and aa[i + 1] <= ab[j + 1]):
+            out.append((A2[i], A2[i + 1], B2[j])); i += 1
+        else:
+            out.append((A2[i], B2[j + 1], B2[j])); j += 1
+    return out
+
+
 def ring_plate(z0, z1, twist, inner_holes, outer_holes, top_is_tube_side):
     """Ring mit 96 Öffnungen. tube-Seite: Loch = Röhren-Außenkontur; Gegenseite: Röhren-Innenkontur.
     Vertikale Lochwand = Innenkontur, verbunden mit Röhreninnenwand."""
     z_tube, z_free = (z1, z0) if top_is_tube_side else (z0, z1)
     up = 1 if top_is_tube_side else -1   # Normalenrichtung der Röhrenseite
+    P3 = lambda p, z: np.array([p[0], p[1], z])
     for k in range(N_SEG):
         th = k * PITCH + twist
         a, b = th - PITCH / 2, th + PITCH / 2
         S = np.array([[R_IN * np.cos(a), R_IN * np.sin(a)], [R_OUT * np.cos(a), R_OUT * np.sin(a)],
                       [R_OUT * np.cos(b), R_OUT * np.sin(b)], [R_IN * np.cos(b), R_IN * np.sin(b)]])
         O, I = outer_holes[k], inner_holes[k]
-        P3 = lambda p, z: np.array([p[0], p[1], z])
-        for i in range(4):
-            j = (i + 1) % 4
-            # Röhrenseite: Rahmen Sektor -> Außenkontur
-            fa = [P3(S[i], z_tube), P3(S[j], z_tube), P3(O[j], z_tube), P3(O[i], z_tube)]
-            # freie Seite: Rahmen Sektor -> Innenkontur
-            fb = [P3(S[i], z_free), P3(S[j], z_free), P3(I[j], z_free), P3(I[i], z_free)]
-            if up > 0:
-                quad(*fa); quad(*fb[::-1])
-            else:
-                quad(*fa[::-1]); quad(*fb)
+        # Röhrenseite: Rahmen Sektor -> Außenkontur; freie Seite: Rahmen Sektor -> Innenkontur
+        for loop, z, sgn in ((O, z_tube, up), (I, z_free, -up)):
+            for t in zipper(S, loop):
+                f = [P3(p, z) for p in t]
+                tris.append(tuple(f if sgn > 0 else f[::-1]))
+        for i in range(N_CIRC):
+            j = (i + 1) % N_CIRC
             # Lochwand (vertikal, Innenkontur) – Normale zeigt ins Loch
             w = [P3(I[i], z_free), P3(I[j], z_free), P3(I[j], z_tube), P3(I[i], z_tube)]
             quad(*(w[::-1] if up > 0 else w))
@@ -135,8 +137,8 @@ for k in range(N_SEG):
     o, i = tube_slices(k)
     all_outer.append(o); all_inner.append(i)
     for s in range(N_SLICES):
-        for e in range(4):
-            f = (e + 1) % 4
+        for e in range(N_CIRC):
+            f = (e + 1) % N_CIRC
             quad(o[s, e], o[s, f], o[s + 1, f], o[s + 1, e])          # Außenwand
             quad(i[s, e], i[s + 1, e], i[s + 1, f], i[s, f])          # Innenwand
 
@@ -163,6 +165,21 @@ bad = sum(1 for (a, b) in directed if (b, a) not in directed)
 print(f"Dreiecke: {len(T):,}  Vertices: {len(uniq):,}  Volumen: {vol/1000:.2f} cm³  "
       f"offene/inkonsistente Kanten: {bad}  doppelte gerichtete Kanten: {len(edges)-len(directed)}")
 
+
+# Kontrolle: minimaler Spalt zwischen Nachbarröhren (Außenkonturen) über alle Höhen
+def poly_dist(A, B):
+    """Minimaler Abstand zweier geschlossener Polygone (Punkt-zu-Kante, beide Richtungen)."""
+    def pe(P, Q):
+        q0, d = Q, np.roll(Q, -1, 0) - Q
+        w = P[:, None] - q0[None]
+        t = np.clip(np.einsum('pqi,qi->pq', w, d) / np.einsum('qi,qi->q', d, d), 0, 1)
+        return np.linalg.norm(w - t[..., None] * d[None], axis=2).min()
+    return min(pe(A, B), pe(B, A))
+
+
+gaps = [poly_dist(all_outer[0][j, :, :2], all_outer[1][j, :, :2]) for j in range(N_SLICES + 1)]
+min_gap = min(gaps)
+
 # ---------------- STL (binär, mm) ----------------
 def normals(T):
     n = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
@@ -172,7 +189,7 @@ def normals(T):
 
 N = normals(T)
 with open(OUT / "RingLampe.stl", "wb") as f:
-    f.write(b"RingLampe AD110 ID100 H200 96 Roehren 0.2mm".ljust(80, b" "))
+    f.write(b"RingLampe AD110 ID100 H200 96 runde Roehren 0.2mm".ljust(80, b" "))
     f.write(struct.pack("<I", len(T)))
     rec = np.zeros(len(T), dtype=[("n", "<f4", 3), ("v", "<f4", (3, 3)), ("a", "<u2")])
     rec["n"], rec["v"] = N, T.astype(np.float32)
@@ -266,7 +283,7 @@ ax = fig.add_axes([0.03, 0.30, 0.33, 0.64])
 setup(ax, "VORDERANSICHT (Röhrenkanten)")
 for k in range(N_SEG):
     o = all_outer[k]
-    for e in range(4):
+    for e in range(0, N_CIRC, N_CIRC // 4):
         ax.plot(o[:, e, 0], o[:, e, 2], color="0.35", lw=0.15)
 ax.add_patch(Rectangle((-R_OUT, -PLATE_T), 2 * R_OUT, PLATE_T, fill=False, lw=LW_THICK))
 ax.add_patch(Rectangle((-R_OUT, HEIGHT), 2 * R_OUT, PLATE_T, fill=False, lw=LW_THICK))
@@ -293,7 +310,7 @@ def ring_view(ax, twist, holes_o, holes_i, show_idx=True):
         ax.plot([-62 * np.cos(a), 62 * np.cos(a)], [-62 * np.sin(a), 62 * np.sin(a)],
                 ls=(0, (12, 3, 2, 3)), color="k", lw=LW_THIN)
     if show_idx:
-        p = seg_quad(0, twist).mean(0) * 1.18
+        p = tube_center(0, twist) * 1.18
         ax.text(*p, "LED 1", fontsize=6, ha="center", va="center")
 
 
@@ -303,8 +320,9 @@ setup(ax, "UNTERE BASIS – DRAUFSICHT")
 ring_view(ax, 0.0, [x[0, :, :2] for x in all_outer], [x[0, :, :2] for x in all_inner])
 dim_h(ax, -R_OUT, R_OUT, -64, f"Ø{2*R_OUT:.0f}")
 dim_h(ax, -R_IN, R_IN, -5, f"Ø{2*R_IN:.0f}")
-ax.text(0, 66, f"{N_SEG}× Segment, Teilung 360°/{N_SEG} = {360/N_SEG:.2f}°", ha="center", fontsize=6.5)
-ax.add_patch(Circle(seg_quad(0).mean(0), 5, fill=False, lw=LW_THIN, ls="--"))
+ax.text(0, 66, f"{N_SEG}× Bohrung Ø{TUBE_D:.1f} auf Teilkreis Ø{2*TUBE_RC:.0f}, "
+        f"Teilung 360°/{N_SEG} = {360/N_SEG:.2f}°", ha="center", fontsize=6.5)
+ax.add_patch(Circle(tube_center(0), 5, fill=False, lw=LW_THIN, ls="--"))
 ax.text(R_OUT + 1, 4, "X", fontsize=9, fontweight="bold")
 ax.set_xlim(-70, 70); ax.set_ylim(-70, 70)
 
@@ -312,10 +330,10 @@ ax.set_xlim(-70, 70); ax.set_ylim(-70, 70)
 ax = fig.add_axes([0.66, 0.56, 0.30, 0.38])
 setup(ax, "OBERE BASIS – DRAUFSICHT, um 120° verdreht")
 ring_view(ax, TWIST, [x[-1, :, :2] for x in all_outer], [x[-1, :, :2] for x in all_inner])
-ax.annotate("", seg_quad(0, TWIST).mean(0) * 0.8, seg_quad(0).mean(0) * 0.8,
+ax.annotate("", tube_center(0, TWIST) * 0.8, tube_center(0) * 0.8,
             arrowprops=dict(arrowstyle="-|>", lw=LW_THIN, connectionstyle="arc3,rad=0.55", color="k"))
 ax.text(28, 30, "120°", fontsize=7)
-ax.plot(*(seg_quad(0).mean(0) * 0.8), "k+", ms=5)
+ax.plot(*(tube_center(0) * 0.8), "k+", ms=5)
 ax.set_xlim(-70, 70); ax.set_ylim(-70, 70)
 
 # --- Schnitt A-A ---
@@ -343,15 +361,22 @@ for poly, kw in ((O0, dict(fc="0.6", ec="k", lw=LW_THICK)), (I0, dict(fc="white"
     ax.add_patch(Polygon(poly, closed=True, **kw))
 ax.plot([R_IN, R_IN], [-4, 4], "k", lw=LW_THIN); ax.plot([R_OUT, R_OUT], [-4, 4], "k", lw=LW_THIN)
 dim_h(ax, R_IN, R_OUT, -4.6, "5.0 (Ring)", fs=6)
-dim_h(ax, SEG_R_IN, SEG_R_OUT, -3.4, f"{SEG_R_OUT-SEG_R_IN:.1f}", fs=6)
-wa = 2 * SEG_R_IN * np.sin(SEG_W / 2); wb = 2 * SEG_R_OUT * np.sin(SEG_W / 2)
-dim_v(ax, SEG_R_IN - 0.25, O0[0, 1], O0[3, 1], f"{wa:.2f}", fs=6)
-dim_v(ax, SEG_R_OUT + 0.25, O0[1, 1], O0[2, 1], f"{wb:.2f}", fs=6, side=1)
-ax.annotate(f"Wand {WALL} (normal)", I0[1], (55.2, 4.0), fontsize=6,
+c0 = tube_center(0)
+ax.annotate(f"Ø{TUBE_D:.1f} außen", c0 + TUBE_D / 2 * np.array([0.71, -0.71]), (55.6, -1.8), fontsize=6,
             arrowprops=dict(arrowstyle="-", lw=LW_THIN))
-ax.annotate(f"Spalt {GAP:.1f}", (SEG_R_IN + 0.15, (O0[3, 1] + O1[0, 1]) / 2), (47.0, 3.4), fontsize=6,
+d_in = 2 * np.linalg.norm(I0 - c0, axis=1).min()
+ax.plot([c0[0] - 2.2, c0[0] + 2.2], [0, 0], ls=(0, (8, 2, 1, 2)), color="k", lw=LW_THIN)
+ax.add_patch(Rectangle((c0[0] - 1, -1), 2, 2, fill=False, ls="--", lw=LW_THIN, ec="0.45"))
+ax.annotate(f"Wand {WALL} (normal)", O0[N_CIRC // 8], (55.2, 4.0), fontsize=6,
             arrowprops=dict(arrowstyle="-", lw=LW_THIN))
-ax.text(52.5, 0, "LED\n2.0×2.0", ha="center", va="center", fontsize=5.5, color="0.3")
+ax.annotate(f"Spalt {GAP:.2f}", (TUBE_RC, (O0[:, 1].max() + O1[:, 1].min()) / 2), (47.0, 3.4), fontsize=6,
+            arrowprops=dict(arrowstyle="-", lw=LW_THIN))
+ax.annotate(f"lichte Weite Ø{d_in:.1f}", (c0[0] - d_in / 2 * 0.7, -d_in / 2 * 0.7), (46.3, -2.4), fontsize=6,
+            arrowprops=dict(arrowstyle="-", lw=LW_THIN))
+ax.annotate("LED 2.0×2.0 (unter Basis)", (c0[0] + 1, 1), (55.8, 1.6), fontsize=5.5, color="0.3",
+            arrowprops=dict(arrowstyle="-", lw=LW_THIN, color="0.45"))
+ax.text(46.3, 0.25, f"Teilkreis R{TUBE_RC:.1f}", ha="left", va="bottom", fontsize=5.5)
+ax.plot([48.6, c0[0] - 2.2], [0, 0], color="k", lw=LW_THIN)
 ax.set_xlim(46, 60); ax.set_ylim(-5.5, 5)
 
 # --- Isometrie ---
@@ -370,12 +395,12 @@ ax3.set_title("ISOMETRIE (ohne Maßstab)", fontsize=8, fontweight="bold", loc="l
 notes = [
     "HINWEISE",
     "1. Alle Maße in mm. Allgemeintoleranzen ISO 2768-m.",
-    f"2. {N_SEG} Röhren, linear gelofted (Regelfläche) von Segment k (unten) zu Segment k (oben, +120°).",
+    f"2. {N_SEG} runde Röhren Ø{TUBE_D:.1f} (Basis), linear gelofted (Regelfläche) von Bohrung k (unten)"
+    " zu Bohrung k (oben, +120°).",
     f"3. Röhrenwandstärke {WALL} mm normal zur Wandfläche; Röhren offen (Lichtkanal).",
-    "4. Jeder Horizontalschnitt = Basis-Segmente × cos(φ/2), gedreht um φ/2 (φ = Verdrehwinkel z/H·120°)",
-    "   → Röhren schneiden sich nicht; Mindestspalt in der Taille 0.3 mm.",
-    f"5. LED-Öffnung (lichte Weite Basis) ca. {np.ptp(all_inner[0][0,:,:2]@rot(-0)[:,:].T,axis=0).min():.1f} × "
-    f"{np.linalg.norm(all_inner[0][0,1]-all_inner[0][0,0]):.1f} mm, geeignet für LEDs 2020 (2.0×2.0 mm).",
+    "4. Jeder Horizontalschnitt = Basis-Kreise × cos(φ/2), gedreht um φ/2 (φ = Verdrehwinkel z/H·120°)",
+    f"   → Querschnitte bleiben Kreise, Röhren schneiden sich nicht; Mindestspalt in der Taille {min_gap:.2f} mm.",
+    f"5. LED-Öffnung rund, lichte Weite Basis ca. Ø{d_in:.1f} mm, über LEDs 2020 (2.0×2.0 mm).",
     "6. Material: PETG / PMMA transluzent gelb. Fertigung: SLA/Resin empfohlen (0.2-mm-Wände).",
     f"7. Volumen ca. {vol/1000:.1f} cm³.",
 ]
@@ -389,7 +414,7 @@ for x in (0, 100):
     tb.plot([x, x], [0, 40], "k", lw=0.6)
 tb.plot([50, 50], [0, 30], "k", lw=0.6)
 rows = [
-    (2, 35, "Benennung:", "RingLampe – 96-LED Röhrenkörper (120° verdreht)", 9),
+    (2, 35, "Benennung:", "RingLampe – 96-LED Rundröhrenkörper (120° verdreht)", 9),
     (2, 25, "Werkstoff:", "Kunststoff gelb transparent (PETG/PMMA)", 7),
     (52, 25, "Maßstab:", "unmaßstäblich – Maße gelten, A3", 7),
     (2, 15, "Datum:", date.today().isoformat(), 7),
@@ -404,13 +429,6 @@ for x, y, lab, val, fs in rows:
 with PdfPages(OUT / "RingLampe_Zeichnung.pdf") as pdf:
     pdf.savefig(fig)
 
-# Kontrolle: minimaler Spalt zwischen Nachbarröhren (Außenkonturen) über alle Höhen
-gaps = []
-for j in range(N_SLICES + 1):
-    A, B = all_outer[0][j, :, :2], all_outer[1][j, :, :2]
-    # Abstand Kante A(2->3) zu Kante B(0->1) über Eckpunkte (Kanten nahezu parallel)
-    def pdist(p, q0, q1):
-        d = q1 - q0; t = np.clip(np.dot(p - q0, d) / np.dot(d, d), 0, 1); return np.linalg.norm(p - q0 - t * d)
-    gaps.append(min(pdist(A[2], B[0], B[1]), pdist(A[3], B[0], B[1]), pdist(B[0], A[3], A[2]), pdist(B[1], A[3], A[2])))
-print(f"Min. Spalt zwischen Nachbarröhren: {min(gaps):.3f} mm (Basis {gaps[0]:.3f} mm)")
+print(f"Min. Spalt zwischen Nachbarröhren: {min_gap:.3f} mm (Basis {gaps[0]:.3f} mm)")
+print(f"Lichte Weite Basis: Ø{d_in:.2f} mm")
 print(f"Taille: Ø außen {2*waist_r_out:.2f} mm")

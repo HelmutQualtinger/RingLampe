@@ -28,7 +28,9 @@
   #ui input[type=range] { width: 100%; }
   #ui .row { display: flex; justify-content: space-between; }
   #hint { position: absolute; bottom: 10px; left: 12px; opacity: .5; font-size: 12px; }
-  #gh { position: absolute; bottom: 10px; right: 12px; color: #ffd21a; font-size: 12px; text-decoration: none; opacity: .8; }
+  #gh { position: absolute; bottom: 10px; right: 12px; color: #ffd21a; font-size: 12px; text-decoration: none; opacity: .8;
+        display: flex; align-items: center; gap: 6px; }
+  #gh svg { width: 18px; height: 18px; fill: currentColor; }
   #gh:hover { opacity: 1; text-decoration: underline; }
   @media (max-width: 600px) { #ui { width: auto; right: 12px; max-height: 45vh; overflow: auto; } }
 </style>
@@ -59,7 +61,7 @@
   <label><input id="rotate" type="checkbox"> Auto-Rotation Kamera</label>
 </div>
 <div id="hint">Maus: drehen · Rad: zoomen · Rechts: verschieben</div>
-<a id="gh" href="https://github.com/HelmutQualtinger/RingLampe" target="_blank" rel="noopener">GitHub: HelmutQualtinger/RingLampe</a>
+<a id="gh" href="https://github.com/HelmutQualtinger/RingLampe" target="_blank" rel="noopener" title="Bauplan auf GitHub: HelmutQualtinger/RingLampe" aria-label="Bauplan auf GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span>Bauplan</span></a>
 
 <script type="module">
 import * as THREE from 'three';
@@ -71,8 +73,8 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 // ---------- Parameter (wie generate_ringlampe.py, mm) ----------
 const R_IN = 50, R_OUT = 55, N = 96, H = 200, TWIST = THREE.MathUtils.degToRad(120);
-const PLATE_T = 2, SEG_R_IN = 50.5, SEG_R_OUT = 54.5, GAP = 0.6, SLICES = 48;
-const PITCH = 2 * Math.PI / N, SEG_W = PITCH - GAP / SEG_R_IN;
+const PLATE_T = 2, TUBE_RC = 52.5, TUBE_D = 2.8, CIRC = 16, SLICES = 48;
+const PITCH = 2 * Math.PI / N;
 
 // ---------- Renderer / Szene ----------
 // Aufnahme-Modus (?record): feste Videoauflösung 1080×1350 (Facebook 4:5), deterministische Zeit
@@ -112,27 +114,36 @@ floor.rotation.x = -Math.PI / 2; floor.position.y = -PLATE_T - 0.01; scene.add(f
 const pivot = new THREE.Group(); pivot.position.y = H / 2 + 40; scene.add(pivot);
 const model = new THREE.Group(); model.rotation.x = -Math.PI / 2; model.position.y = -H / 2; pivot.add(model);
 
-function segQuad(k, twist = 0) {
-  const th = k * PITCH + twist, a = th - SEG_W / 2, b = th + SEG_W / 2;
-  return [[SEG_R_IN * Math.cos(a), SEG_R_IN * Math.sin(a)], [SEG_R_OUT * Math.cos(a), SEG_R_OUT * Math.sin(a)],
-          [SEG_R_OUT * Math.cos(b), SEG_R_OUT * Math.sin(b)], [SEG_R_IN * Math.cos(b), SEG_R_IN * Math.sin(b)]];
+// Runde Röhre k: CIRC Konturpunkte, Startwinkel dreht mit (wie tube_circle in Python)
+function tubeCircle(k, twist = 0) {
+  const th = k * PITCH + twist, cx = TUBE_RC * Math.cos(th), cy = TUBE_RC * Math.sin(th);
+  return Array.from({ length: CIRC }, (_, i) => {
+    const p = th + 2 * Math.PI * i / CIRC;
+    return [cx + TUBE_D / 2 * Math.cos(p), cy + TUBE_D / 2 * Math.sin(p)];
+  });
 }
 
 // ---------- Röhren mit Licht-Shader ----------
 const pos = [], segAttr = [], tAttr = [], nrm = [];
 const cT = Math.cos(TWIST), sT = Math.sin(TWIST);
 for (let k = 0; k < N; k++) {
-  const P = segQuad(k), RP = P.map(([x, y]) => [x * cT - y * sT, x * sT + y * cT]);
+  const P = tubeCircle(k), RP = P.map(([x, y]) => [x * cT - y * sT, x * sT + y * cT]);
   const at = (i, t) => [(1 - t) * P[i][0] + t * RP[i][0], (1 - t) * P[i][1] + t * RP[i][1], H * t];
+  // glatte Normale: Tangente um den Querschnitt × Erzeugende
+  const nAt = (i, t) => {
+    const a = at((i + 1) % CIRC, t), b = at((i + CIRC - 1) % CIRC, t);
+    const tan = new THREE.Vector3(a[0] - b[0], a[1] - b[1], 0);
+    const gen = new THREE.Vector3(RP[i][0] - P[i][0], RP[i][1] - P[i][1], H);
+    return tan.cross(gen).normalize();
+  };
   for (let s = 0; s < SLICES; s++) {
     const t0 = s / SLICES, t1 = (s + 1) / SLICES;
-    for (let e = 0; e < 4; e++) {
-      const f = (e + 1) % 4;
-      const v = [at(e, t0), at(f, t0), at(f, t1), at(e, t1)], ts = [t0, t0, t1, t1];
-      const n = new THREE.Vector3(...v[1]).sub(new THREE.Vector3(...v[0]))
-        .cross(new THREE.Vector3(...v[3]).sub(new THREE.Vector3(...v[0]))).normalize();
+    for (let e = 0; e < CIRC; e++) {
+      const f = (e + 1) % CIRC;
+      const ids = [e, f, f, e], ts = [t0, t0, t1, t1];
       for (const i of [0, 1, 2, 0, 2, 3]) {
-        pos.push(...v[i]); nrm.push(n.x, n.y, n.z); segAttr.push(k); tAttr.push(ts[i]);
+        const n = nAt(ids[i], ts[i]);
+        pos.push(...at(ids[i], ts[i])); nrm.push(n.x, n.y, n.z); segAttr.push(k); tAttr.push(ts[i]);
       }
     }
   }
@@ -187,8 +198,8 @@ function plate(z, twist) {
   const shape = new THREE.Shape(); shape.absarc(0, 0, R_OUT, 0, Math.PI * 2, false);
   const hole0 = new THREE.Path(); hole0.absarc(0, 0, R_IN, 0, Math.PI * 2, true); shape.holes.push(hole0);
   for (let k = 0; k < N; k++) {
-    const q = segQuad(k, twist), h = new THREE.Path();
-    h.moveTo(...q[0]); h.lineTo(...q[3]); h.lineTo(...q[2]); h.lineTo(...q[1]); h.closePath();
+    const q = tubeCircle(k, twist).reverse(), h = new THREE.Path();   // Loch im Uhrzeigersinn
+    h.moveTo(...q[0]); q.slice(1).forEach(p => h.lineTo(...p)); h.closePath();
     shape.holes.push(h);
   }
   const g = new THREE.ExtrudeGeometry(shape, { depth: PLATE_T, bevelEnabled: false, curveSegments: 96 });
@@ -202,7 +213,7 @@ const ledMat = new THREE.MeshBasicMaterial({ toneMapped: false });
 const leds = new THREE.InstancedMesh(ledGeo, ledMat, N);
 const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion();
 for (let k = 0; k < N; k++) {
-  const th = k * PITCH, r = (SEG_R_IN + SEG_R_OUT) / 2;
+  const th = k * PITCH, r = TUBE_RC;
   q4.setFromAxisAngle(new THREE.Vector3(0, 0, 1), th);
   m4.compose(new THREE.Vector3(r * Math.cos(th), r * Math.sin(th), -0.45), q4, new THREE.Vector3(1, 1, 1));
   leds.setMatrixAt(k, m4); leds.setColorAt(k, new THREE.Color());
