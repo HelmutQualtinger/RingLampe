@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-RingLampe: a procedurally generated 3D lamp body. Two ring bases (OD 110 / ID 100 mm, 2 mm thick), each with 96 round LED openings (Ø 2.8 mm on a 105 mm pitch circle), sit 200 mm apart. The top ring is rotated 120°. 96 round tubes with 0.2 mm walls are lofted from each bottom opening to its matching top opening. The original German spec is in `prompt.md`. Code comments, UI text and drawing labels are in German.
+RingLampe: a procedurally generated 3D lamp body. Two ring bases (OD 110 / ID 100 mm, 2 mm thick), each with 48 round LED openings (Ø 2.8 mm on a 105 mm pitch circle), sit 200 mm apart. The top ring is rotated 120°. 48 round tubes with 0.2 mm walls are lofted from each bottom opening to its matching top opening. The original German spec is in `prompt.md`. Code comments, UI text and drawing labels are in German.
 
 ## Commands
 

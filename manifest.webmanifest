@@ -1,7 +1,7 @@
 {
   "name": "RingLampe",
   "short_name": "RingLampe",
-  "description": "96 RGB-LEDs · 96 Röhren · 120° verdreht – interaktiver 3D-Viewer",
+  "description": "48 RGB-LEDs · 48 Röhren · 120° verdreht – interaktiver 3D-Viewer",
   "start_url": "ringlampe_viewer.html",
   "scope": "./",
   "display": "fullscreen",

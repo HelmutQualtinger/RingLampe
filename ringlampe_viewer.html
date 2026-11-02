@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RingLampe Viewer</title>
-<meta name="description" content="RingLampe – 96 RGB-LEDs, 96 Röhren, 120° verdreht. Interaktiver 3D-Viewer.">
+<meta name="description" content="RingLampe – 48 RGB-LEDs, 48 Röhren, 120° verdreht. Interaktiver 3D-Viewer.">
 <meta name="theme-color" content="#07080b">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" href="icons/icon-192.png">
@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta property="og:type" content="website">
 <meta property="og:title" content="RingLampe">
-<meta property="og:description" content="96 RGB-LEDs · 96 Röhren · 120° verdreht – interaktiver 3D-Viewer im Browser">
+<meta property="og:description" content="48 RGB-LEDs · 48 Röhren · 120° verdreht – interaktiver 3D-Viewer im Browser">
 <meta property="og:url" content="https://helmutqualtinger.github.io/RingLampe/">
 <meta property="og:image" content="https://helmutqualtinger.github.io/RingLampe/og-image.jpg">
 <meta property="og:image:width" content="1200">
@@ -43,7 +43,7 @@
 </head>
 <body>
 <div id="ui">
-  <h1>RingLampe – 96 LEDs <span id="fps" style="float:right;font-weight:normal;opacity:.7"></span></h1>
+  <h1>RingLampe – 48 LEDs <span id="fps" style="float:right;font-weight:normal;opacity:.7"></span></h1>
   <label><span class="row"><span>Rotation Regenbogen</span><span id="vSpeed"></span></span>
     <input id="speed" type="range" min="-1" max="1" step="0.01" value="0.15"></label>
   <label><span class="row"><span>Licht-Laufzeit nach oben (s)</span><span id="vDelay"></span></span>
@@ -72,7 +72,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 // ---------- Parameter (wie generate_ringlampe.py, mm) ----------
-const R_IN = 50, R_OUT = 55, N = 96, H = 200, TWIST = THREE.MathUtils.degToRad(120);
+const R_IN = 50, R_OUT = 55, N = 48, H = 200, TWIST = THREE.MathUtils.degToRad(120);
 const PLATE_T = 2, TUBE_RC = 52.5, TUBE_D = 2.8, CIRC = 16, SLICES = 48;
 const PITCH = 2 * Math.PI / N;
 
@@ -207,7 +207,7 @@ function plate(z, twist) {
 }
 model.add(plate(-PLATE_T, 0), plate(H, TWIST));
 
-// ---------- 96 RGB-LEDs (unter der unteren Basis) ----------
+// ---------- 48 RGB-LEDs (unter der unteren Basis) ----------
 const ledGeo = new THREE.BoxGeometry(2, 2, 0.8);
 const ledMat = new THREE.MeshBasicMaterial({ toneMapped: false });
 const leds = new THREE.InstancedMesh(ledGeo, ledMat, N);
@@ -309,7 +309,7 @@ if (REC) {
       g.fillText('RingLampe', VW / 2, 130);
       g.font = '400 30px -apple-system, "Helvetica Neue", Arial, sans-serif';
       g.fillStyle = 'rgba(255,255,255,0.8)';
-      g.fillText('96 RGB-LEDs · 96 Röhren · 120° verdreht', VW / 2, 185);
+      g.fillText('48 RGB-LEDs · 48 Röhren · 120° verdreht', VW / 2, 185);
       g.fillText('Ø 110 mm · Höhe 204 mm · Wandstärke 0,2 mm', VW / 2, VH - 90);
       g.restore();
     }

@@ -2,9 +2,9 @@
 """RingLampe – prozedurale Erzeugung (STL, GLB, technische Zeichnung PDF).
 
 Geometrie (Einheiten mm):
-  * 2 ringförmige Basen, AD 110 / ID 100, Dicke PLATE_T, mit je 96 runden LED-Öffnungen
+  * 2 ringförmige Basen, AD 110 / ID 100, Dicke PLATE_T, mit je 48 runden LED-Öffnungen
   * obere Basis 200 mm über der unteren, um 120° verdreht
-  * 96 runde Röhren, linear gelofted von der unteren zur oberen Öffnung, Wandstärke 0.2 mm (normal zur Wand)
+  * 48 runde Röhren, linear gelofted von der unteren zur oberen Öffnung, Wandstärke 0.2 mm (normal zur Wand)
   * Jeder Horizontalschnitt des Röhrenbündels ist eine Ähnlichkeitsabbildung (Drehung+Skalierung)
     der Basis-Kreise -> Querschnitte bleiben Kreise, Röhren schneiden sich nie, solange die
     Basis-Kreise disjunkt sind.
@@ -20,7 +20,7 @@ OUT = Path(__file__).parent
 
 # ---------------- Parameter ----------------
 R_IN, R_OUT = 50.0, 55.0          # Ring ID 100 / AD 110
-N_SEG = 96                        # LEDs / Segmente
+N_SEG = 48                        # LEDs / Segmente
 HEIGHT = 200.0                    # Abstand der Basen
 TWIST = np.radians(120.0)         # Verdrehung obere Basis
 WALL = 0.2                        # Röhrenwandstärke
@@ -104,7 +104,7 @@ def zipper(A, B):
 
 
 def ring_plate(z0, z1, twist, inner_holes, outer_holes, top_is_tube_side):
-    """Ring mit 96 Öffnungen. tube-Seite: Loch = Röhren-Außenkontur; Gegenseite: Röhren-Innenkontur.
+    """Ring mit N_SEG Öffnungen. tube-Seite: Loch = Röhren-Außenkontur; Gegenseite: Röhren-Innenkontur.
     Vertikale Lochwand = Innenkontur, verbunden mit Röhreninnenwand."""
     z_tube, z_free = (z1, z0) if top_is_tube_side else (z0, z1)
     up = 1 if top_is_tube_side else -1   # Normalenrichtung der Röhrenseite
@@ -189,7 +189,7 @@ def normals(T):
 
 N = normals(T)
 with open(OUT / "RingLampe.stl", "wb") as f:
-    f.write(b"RingLampe AD110 ID100 H200 96 runde Roehren 0.2mm".ljust(80, b" "))
+    f.write(f"RingLampe AD110 ID100 H200 {N_SEG} runde Roehren 0.2mm".encode().ljust(80, b" "))
     f.write(struct.pack("<I", len(T)))
     rec = np.zeros(len(T), dtype=[("n", "<f4", 3), ("v", "<f4", (3, 3)), ("a", "<u2")])
     rec["n"], rec["v"] = N, T.astype(np.float32)
@@ -359,8 +359,9 @@ for poly, kw in ((O0, dict(fc="0.6", ec="k", lw=LW_THICK)), (I0, dict(fc="white"
                  (all_outer[-1][0, :, :2], dict(fc="0.6", ec="k", lw=LW_THIN)),
                  (all_inner[-1][0, :, :2], dict(fc="white", ec="k", lw=LW_THIN))):
     ax.add_patch(Polygon(poly, closed=True, **kw))
-ax.plot([R_IN, R_IN], [-4, 4], "k", lw=LW_THIN); ax.plot([R_OUT, R_OUT], [-4, 4], "k", lw=LW_THIN)
-dim_h(ax, R_IN, R_OUT, -4.6, "5.0 (Ring)", fs=6)
+YL = TUBE_RC * np.sin(PITCH) + TUBE_D / 2 + 0.4          # Nachbarröhren noch sichtbar
+ax.plot([R_IN, R_IN], [-YL, YL], "k", lw=LW_THIN); ax.plot([R_OUT, R_OUT], [-YL, YL], "k", lw=LW_THIN)
+dim_h(ax, R_IN, R_OUT, -TUBE_D / 2 - 1.6, "5.0 (Ring)", fs=6)
 c0 = tube_center(0)
 ax.annotate(f"Ø{TUBE_D:.1f} außen", c0 + TUBE_D / 2 * np.array([0.71, -0.71]), (55.6, -1.8), fontsize=6,
             arrowprops=dict(arrowstyle="-", lw=LW_THIN))
@@ -369,7 +370,7 @@ ax.plot([c0[0] - 2.2, c0[0] + 2.2], [0, 0], ls=(0, (8, 2, 1, 2)), color="k", lw=
 ax.add_patch(Rectangle((c0[0] - 1, -1), 2, 2, fill=False, ls="--", lw=LW_THIN, ec="0.45"))
 ax.annotate(f"Wand {WALL} (normal)", O0[N_CIRC // 8], (55.2, 4.0), fontsize=6,
             arrowprops=dict(arrowstyle="-", lw=LW_THIN))
-ax.annotate(f"Spalt {GAP:.2f}", (TUBE_RC, (O0[:, 1].max() + O1[:, 1].min()) / 2), (47.0, 3.4), fontsize=6,
+ax.annotate(f"Spalt {GAP:.2f}", (TUBE_RC, (O0[:, 1].max() + O1[:, 1].min()) / 2), (46.3, (O0[:, 1].max() + O1[:, 1].min()) / 2 + 0.8), fontsize=6,
             arrowprops=dict(arrowstyle="-", lw=LW_THIN))
 ax.annotate(f"lichte Weite Ø{d_in:.1f}", (c0[0] - d_in / 2 * 0.7, -d_in / 2 * 0.7), (46.3, -2.4), fontsize=6,
             arrowprops=dict(arrowstyle="-", lw=LW_THIN))
@@ -377,7 +378,7 @@ ax.annotate("LED 2.0×2.0 (unter Basis)", (c0[0] + 1, 1), (55.8, 1.6), fontsize=
             arrowprops=dict(arrowstyle="-", lw=LW_THIN, color="0.45"))
 ax.text(46.3, 0.25, f"Teilkreis R{TUBE_RC:.1f}", ha="left", va="bottom", fontsize=5.5)
 ax.plot([48.6, c0[0] - 2.2], [0, 0], color="k", lw=LW_THIN)
-ax.set_xlim(46, 60); ax.set_ylim(-5.5, 5)
+ax.set_xlim(46, 60); ax.set_ylim(-YL, YL)
 
 # --- Isometrie ---
 ax3 = fig.add_axes([0.80, 0.27, 0.17, 0.29], projection="3d")
@@ -414,7 +415,7 @@ for x in (0, 100):
     tb.plot([x, x], [0, 40], "k", lw=0.6)
 tb.plot([50, 50], [0, 30], "k", lw=0.6)
 rows = [
-    (2, 35, "Benennung:", "RingLampe – 96-LED Rundröhrenkörper (120° verdreht)", 9),
+    (2, 35, "Benennung:", f"RingLampe – {N_SEG}-LED Rundröhrenkörper (120° verdreht)", 9),
     (2, 25, "Werkstoff:", "Kunststoff gelb transparent (PETG/PMMA)", 7),
     (52, 25, "Maßstab:", "unmaßstäblich – Maße gelten, A3", 7),
     (2, 15, "Datum:", date.today().isoformat(), 7),
