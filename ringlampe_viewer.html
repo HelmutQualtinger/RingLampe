@@ -4,6 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RingLampe Viewer</title>
+<meta name="description" content="RingLampe – 96 RGB-LEDs, 96 Röhren, 120° verdreht. Interaktiver 3D-Viewer.">
+<meta name="theme-color" content="#07080b">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta property="og:type" content="website">
+<meta property="og:title" content="RingLampe">
+<meta property="og:description" content="96 RGB-LEDs · 96 Röhren · 120° verdreht – interaktiver 3D-Viewer im Browser">
+<meta property="og:url" content="https://helmutqualtinger.github.io/RingLampe/">
+<meta property="og:image" content="https://helmutqualtinger.github.io/RingLampe/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://helmutqualtinger.github.io/RingLampe/og-image.jpg">
 <style>
   html, body { margin: 0; height: 100%; background: #07080b; color: #ddd; font: 13px system-ui, sans-serif; overflow: hidden; }
   #ui { position: absolute; top: 12px; left: 12px; background: rgba(20,22,28,.82); padding: 12px 14px; border-radius: 8px; width: 240px; }
@@ -12,6 +28,9 @@
   #ui input[type=range] { width: 100%; }
   #ui .row { display: flex; justify-content: space-between; }
   #hint { position: absolute; bottom: 10px; left: 12px; opacity: .5; font-size: 12px; }
+  #gh { position: absolute; bottom: 10px; right: 12px; color: #ffd21a; font-size: 12px; text-decoration: none; opacity: .8; }
+  #gh:hover { opacity: 1; text-decoration: underline; }
+  @media (max-width: 600px) { #ui { width: auto; right: 12px; max-height: 45vh; overflow: auto; } }
 </style>
 <script type="importmap">
 { "imports": {
@@ -40,6 +59,7 @@
   <label><input id="rotate" type="checkbox"> Auto-Rotation Kamera</label>
 </div>
 <div id="hint">Maus: drehen · Rad: zoomen · Rechts: verschieben</div>
+<a id="gh" href="https://github.com/HelmutQualtinger/RingLampe" target="_blank" rel="noopener">GitHub: HelmutQualtinger/RingLampe</a>
 
 <script type="module">
 import * as THREE from 'three';
@@ -232,7 +252,7 @@ const c = new THREE.Color();
 const clock = new THREE.Clock();
 let tumbleT = 0;
 let fpsN = 0, fpsT = performance.now();
-function step(dt, tumbleOn, tumbleSpeed) {
+function step(dt, tumbleOn, tumbleSpeed, render = true) {
   uniforms.uPhase.value += dt * uniforms.uSpeed.value;   // Phase integriert -> Geschwindigkeit live änderbar
   const ph = uniforms.uPhase.value, rep = uniforms.uRep.value, br = uniforms.uBright.value;
   for (let k = 0; k < N; k++) {
@@ -252,7 +272,7 @@ function step(dt, tumbleOn, tumbleSpeed) {
     pivot.rotateZ(s * (0.15 + w(0.23, 0.71, 1.61, 3.1)));
   }
   controls.update();
-  composer.render();
+  if (render) composer.render();
 }
 
 if (!REC) renderer.setAnimationLoop(() => {
@@ -263,7 +283,7 @@ if (!REC) renderer.setAnimationLoop(() => {
 
 // ---------- Videoaufnahme: Frame für Frame rendern, Overlay zeichnen, an lokalen Server senden ----------
 if (REC) {
-  $('ui').style.display = 'none'; $('hint').style.display = 'none';
+  $('ui').style.display = 'none'; $('hint').style.display = 'none'; $('gh').style.display = 'none';
   controls.enabled = false; controls.autoRotate = false; controls.enableDamping = false;
   const out = document.createElement('canvas'); out.width = VW; out.height = VH;
   const g = out.getContext('2d');
@@ -286,14 +306,16 @@ if (REC) {
     if (fade < 1) { g.fillStyle = `rgba(0,0,0,${1 - fade})`; g.fillRect(0, 0, VW, VH); }
   }
   window.__rec = { frame: 0, total: FPS * DURATION, done: false };
-  window.startRecording = async (endpoint = '/frame/') => {
+  window.startRecording = async (endpoint = '/frame/', from = 0, to = FPS * DURATION) => {
     const dt = 1 / FPS;
     for (let i = 0; i < FPS * DURATION; i++) {
       const t = i / FPS;
       // Choreografie: Regenbogen-Tempo schwankt sanft, Taumeln startet ruhig und wird lebhafter
       uniforms.uSpeed.value = 0.18 + 0.12 * Math.sin(2 * Math.PI * t / 30);
       const tumble = 0.5 + 0.7 * smooth(t / 12);
-      step(dt, true, tumble);
+      step(dt, true, tumble, i >= from);
+      if (i < from) continue;
+      if (i >= to) break;
       g.drawImage(renderer.domElement, 0, 0);
       overlay(t);
       const blob = await new Promise(r => out.toBlob(r, 'image/jpeg', 0.95));
@@ -303,6 +325,8 @@ if (REC) {
     window.__rec.done = true;
   };
 }
+
+if (!REC && 'serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js');
 
 addEventListener('resize', () => {
   if (REC) return;
